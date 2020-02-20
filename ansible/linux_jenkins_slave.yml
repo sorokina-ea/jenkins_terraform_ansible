@@ -1,0 +1,70 @@
+---
+
+- hosts: tag_Name_Jenkins_Slave
+  become: yes
+  vars_files:
+    - "vars/jenkins_vars.yml"
+
+  pre_tasks:
+    - name: Update cache for systems with APT
+      when: ansible_pkg_mgr == 'apt'
+      apt:
+        update_cache: yes
+
+    - name: Install secure updates
+      when: ansible_pkg_mgr == 'apt'
+      apt:
+        name: "*"
+        state: latest
+        force_apt_get: true
+      register: secure_updates
+
+    - name: Reboot immediately if there was a change.
+      when: secure_updates is changed
+      shell: "sleep 5 && reboot"
+      async: 1
+      poll: 0
+
+    - name: Wait for the reboot to complete if there was a change.
+      when: secure_updates is changed
+      wait_for_connection:
+        connect_timeout: 20
+        sleep: 5
+        delay: 5
+        timeout: 300
+
+  roles:
+    - role: ansible-role-java
+
+  tasks:
+
+  - name: Install required software
+    package:
+      name: "{{ jenkins_slave_packages }}"
+
+  - name: Create temp directory
+    file:
+      path: "/tmp/{{ ansible_ssh_user }}"
+      state: directory
+      owner: "{{ ansible_ssh_user }}"
+      group: "{{ ansible_ssh_user }}"
+
+  - name: Create slave config on Jenkins server
+    template:
+      src: jenkins-slave.xml.j2
+      dest: /tmp/{{ ansible_ssh_user }}/jenkins-slave-{{ ansible_host }}.xml
+      owner: "{{ ansible_ssh_user }}"
+      group: "{{ ansible_ssh_user }}"
+
+  - name: Copy created files to control host
+    fetch:
+      src: /tmp/{{ ansible_ssh_user }}/jenkins-slave-{{ ansible_host }}.xml
+      dest: tmp/
+      flat: yes
+
+  - name: Remove temp directory
+    file:
+      path: "/tmp/{{ ansible_ssh_user }}"
+      state: absent
+      owner: "{{ ansible_ssh_user }}"
+      group: "{{ ansible_ssh_user }}"

@@ -1,0 +1,146 @@
+---
+
+- hosts: tag_Name_Jenkins_Master
+  become: yes
+  vars_files:
+    - "vars/jenkins_vars.yml"
+  vars:
+    jenkins_hostname: "{{ ec2_public_dns_name }}"
+
+
+  pre_tasks:
+    - name: Update cache for systems with APT
+      when: ansible_pkg_mgr == 'apt' or ansible_os_family == 'Debian'
+      apt:
+        update_cache: yes
+
+    - name: Install secure updates
+      when: ansible_pkg_mgr == 'apt'
+      apt:
+        name: "*"
+        state: latest
+        force_apt_get: true
+      register: secure_updates
+
+    - name: Reboot immediately if there was a change.
+      when: secure_updates is changed
+      shell: "sleep 5 && reboot"
+      async: 1
+      poll: 0
+
+    - name: Wait for the reboot to complete if there was a change.
+      when: secure_updates is changed
+      wait_for_connection:
+        connect_timeout: 20
+        sleep: 5
+        delay: 5
+        timeout: 300
+
+  roles:
+    - role: ansible-role-java
+    - role: ansible-role-jenkins
+      vars:
+        jenkins_repo_url: "deb http://pkg.jenkins-ci.org/{{ ansible_os_family | lower}}-stable binary/"
+        jenkins_repo_key_url: "http://pkg.jenkins-ci.org/{{ ansible_os_family | lower }}-stable/jenkins-ci.org.key"
+
+  tasks:
+
+    - name: Disallow anonymous read access
+      lineinfile:
+        path: "{{ jenkins_home }}/config.xml"
+        regexp: '<denyAnonymousReadAccess>.*</denyAnonymousReadAccess>'
+        line: '<denyAnonymousReadAccess>true</denyAnonymousReadAccess>'
+        backup: yes
+      register: deny_anonymous_access
+
+    - name: Install additonal Jenkins plugins
+      when: plugins is defined
+      command: java -jar {{ jenkins_jar_location }} -auth {{ jenkins_admin_username }}:{{ jenkins_admin_password }} -s http://{{ jenkins_hostname }}:{{ jenkins_http_port }} install-plugin {{ item }} -deploy
+      args:
+        creates: "{{ jenkins_home }}/plugins/{{ item }}.jpi"
+      with_items: "{{ plugins }}"
+
+    - name: Copy template files to jenkins server for further usage
+      template:
+        src: "{{ item }}"
+        dest: /tmp/{{ ansible_ssh_user }}/
+        owner: "{{ ansible_ssh_user }}"
+        group: "{{ ansible_ssh_user }}"
+      loop:
+        - credentials.xml.j2
+        - job_config.xml.j2
+
+    # Ingnore error from this task because it's need to avoid adding the existed credentials
+    - name: Check existed credentials on Jenkins Master
+      command: java -jar "{{ jenkins_jar_location }}" -auth "{{ jenkins_admin_username }}:{{ jenkins_admin_password }}" -s "http://{{ jenkins_hostname }}:{{ jenkins_http_port }}" list-credentials {{ jenkins_store_id }}
+      register: credentials
+      ignore_errors: yes
+
+    - name: Create Credential with SSH key to access slaves
+      when: '"{{ credentials_id }}" in credentials.stdout'
+      shell: java -jar "{{ jenkins_jar_location }}" -auth "{{ jenkins_admin_username }}:{{ jenkins_admin_password }}" -s "http://{{ jenkins_hostname }}:{{ jenkins_http_port }}" create-credentials-by-xml {{ jenkins_store_id }} _  < "/tmp/{{ ansible_ssh_user }}/credentials.xml.j2"
+      args:
+        executable: /bin/bash
+
+    - name: Create job
+      shell: java -jar "{{ jenkins_jar_location }}" -s "http://{{ jenkins_hostname }}:{{ jenkins_http_port }}" -auth "{{ jenkins_admin_username }}:{{ jenkins_admin_password }}" create-job "{{ jenkins_job_name }}" < "/tmp/{{ ansible_ssh_user }}/job_config.xml.j2"
+      args:
+        executable: /bin/bash
+        creates: "/var/lib/jenkins/jobs/{{ jenkins_job_name }}"
+
+    - name: Create temp directory
+      file:
+        path: "/tmp/{{ ansible_ssh_user }}"
+        state: directory
+        owner: "{{ ansible_ssh_user }}"
+        group: "{{ ansible_ssh_user }}"
+
+    - name: Copy slave configs to Jenkins master
+      copy:
+        src: "tmp/jenkins-slave-{{ item }}.xml"
+        dest: "/tmp/{{ ansible_ssh_user }}/"
+      with_items:
+        - "{{ groups['tag_Name_Jenkins_Slave'] }}"
+
+    - name: Create Slave Node
+      shell: java -jar "{{ jenkins_jar_location }}" -s "http://{{ jenkins_hostname }}:{{ jenkins_http_port }}" -auth "{{ jenkins_admin_username }}:{{ jenkins_admin_password }}" create-node "{{ item }}" < "/tmp/{{ ansible_ssh_user }}/jenkins-slave-{{ item }}.xml"
+      args:
+        creates: "{{ jenkins_home }}/nodes/{{ item }}/config.xml"
+        executable: /bin/bash
+      with_items:
+        - "{{ groups['tag_Name_Jenkins_Slave'] }}"
+
+    - name: Restart Jenkins master
+      when: deny_anonymous_access is changed
+      systemd:
+        name: jenkins
+        state: restarted
+
+    - name: Wait for Jenkins to start up before proceeding.
+      command: >
+        curl -D - --silent --max-time 5 http://{{ jenkins_hostname }}:{{ jenkins_http_port }}{{ jenkins_url_prefix }}/cli/
+      args:
+        warn: false
+      register: result
+      until: >
+        (result.stdout.find("403 Forbidden") != -1)
+        or (result.stdout.find("200 OK") != -1)
+        and (result.stdout.find("Please wait while") == -1)
+      retries: "{{ jenkins_connection_retries }}"
+      delay: "{{ jenkins_connection_delay }}"
+      changed_when: false
+      check_mode: false
+
+    - name: Remove temporary directory on Jenkins Master
+      file:
+        path: /tmp/{{ ansible_ssh_user }}/
+        state: absent
+
+    - name: Remove slave configs from tmp directory
+      file:
+        path: tmp
+        state: absent
+      delegate_to: localhost
+
+    - debug:
+        msg: "Jenkins Master has been successfully configured - http://{{ jenkins_hostname }}:{{ jenkins_http_port }}"

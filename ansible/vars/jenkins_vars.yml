@@ -1,0 +1,32 @@
+ansible_ssh_user: "ubuntu"
+ansible_python_interpreter: /usr/bin/python3
+ansible_ssh_private_key_file: "{{ private_key_path }}"
+private_key_path: "../jenkins.pem"
+public_key_path: "../jenkins.pub"
+
+private_key: "{{ lookup('file', '{{ private_key_path }}' )}}"
+public_key: "{{ lookup('file', '{{ public_key_path }}' )}}"
+
+jenkins_admin_username: admin
+jenkins_admin_password: admin
+jenkins_home: /var/lib/jenkins
+jenkins_http_port: 8080
+jenkins_store_id: "system::system::jenkins"
+jenkins_jar_location: /opt/jenkins-cli.jar
+plugins:
+  - ec2
+  - github-pullrequest
+  - authorize-project
+jenkins_slave_packages:
+  - maven
+
+# Variables for jenkins-slave.xml.j2
+num_executors: 1
+jenkins_slave_label: "jenkins-slave"
+ssh_port: 22
+credentials_id: "ubuntu"
+
+# Variables for job_config.xml.j2
+git_repo: "https://github.com/sorokina-ea/simple-java-maven-app.git"
+default_branch: master
+jenkins_job_name: "maven-project-pipeline"

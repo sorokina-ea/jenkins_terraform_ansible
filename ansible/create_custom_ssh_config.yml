@@ -1,0 +1,9 @@
+---
+- hosts: localhost
+  vars_files:
+    - vars/jenkins_vars.yml
+  tasks:
+  - name: Create custom ssh config
+    template:
+      src: custom_ssh.cfg.j2
+      dest: custom_ssh.cfg

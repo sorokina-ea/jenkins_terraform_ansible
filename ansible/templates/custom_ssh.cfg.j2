@@ -1,0 +1,8 @@
+Host 10.0.1.*
+  ServerAliveInterval 60
+  TCPKeepAlive yes
+  ProxyCommand ssh -oStrictHostKeyChecking=no -q -A ec2-user@{{ hostvars[groups['tag_Name_VPC_NAT'][0]]['ec2_ip_address'] }} -i "{{ private_key_path }}" nc %h %p
+  ControlMaster auto
+  ControlPath ~/.ssh/ansible-%r@%h:%p
+  ControlPersist 8h
+  User ubuntu

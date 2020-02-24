@@ -1,5 +1,28 @@
 # General
-Quick start on how to provision Jenkins CI/CD using terraform amd ansible scripts
+* Default location: Frankfurt (eu-central-1)
+* Default availability zone for main resources: "eu-central-1b"
+* 1 public subnet will use "eu-central-1a" AZ. (Need to create Application Load Balancer)
+
+The scripts in this repository will create the following resources in AWS Cloud:
+![Structure](images/structure.png)
+
+## Project structure
+* ansible - folder with ansible playbooks, inventories, etc.
+* terraform - folder with terraform infrastructure files
+* images - pictures used in README
+```
+|-- ansible
+|   |-- roles
+|   |   |-- ansible-role-java
+|   |   `-- ansible-role-jenkins
+|   |-- templates
+|   |-- vars
+|   `-- tmp
+|-- terraform
+|-- images
+```
+
+# Getting started
 
 ## Pre-requisites:
 This playbook is written for Linux only with the focus on Ubuntu18.04.
@@ -9,21 +32,8 @@ You should have the following software installed on your host
 2. ansible
 3. python
 
-## Project structure
-* ansible - folder with ansible playbooks, inventories, etc.
-* terraform - folder with terraform infrastructure files
-```
-|-- ansible
-|   |-- roles
-|   |   |-- ansible-role-java
-|   |   `-- ansible-role-jenkins
-|   |-- templates
-|   `-- tmp
-|-- jenkins
-|-- terraform
 
-```
-## Getting started
+## Prepare environment
 Prepend environment for using ansible dynamic inventory with Amazon ec2:
 ```
 $ pip install boto
@@ -37,15 +47,28 @@ aws_access_key_id = <AWS_ACCESS_TOKEN>
 aws_secret_access_key = <AWS_SECRET_ACCESS_KEY>
 ...
 ```
-To run this automation right now with defaults:
-```
-chmod a+x run.sh
-./run.sh
-```
 
-Or go though the next topic.
+## Short execution plan with default parameters usage
+```
+$ ssh-keygen -m PEM -t rsa -b 2048 -C jenkins@jenkins -f jenkins.pem -N "" -q
+$ chmod 600 jenkins.pem
+$ mv jenkins.pem.pub jenkins.pub
 
-## Usage
+$ cd terraform
+$ terraform apply -auto-approve
+
+cd ../ansible
+ansible-playbook -i ec2.py create_custom_ssh_config.yml
+ansible-playbook -i ec2.py linux_jenkins_slave.yml
+ansible-playbook -i ec2.py linux_jenkins_installation.yml
+```
+Now you should be able to connect to Jenkins Server.
+Please use Application Load Balancer DNS name, it's appear in terraform output. Or you can find it in your AWS console.
+
+Go though default installation steps and enjoy your new Jenkins CI\CD installation.
+
+## Usage description
+### Preparation
 Ansible and Terraform scripts will ask you for private and public ssh keys.
 In case you have no existed one, follow the instruction below:
 ```
@@ -54,12 +77,13 @@ chmod 600 jenkins.pem
 mv jenkins.pem.pub jenkins.pub
 ```
 
-Or set your variables in "terraform.tfvars" and "vars/jenkins_vars.yml" files accordingly.
+Or set your variables in "terraform/terraform.tfvars" and "ansible/vars/jenkins_vars.yml" files accordingly.
 ```
 public_key_path = "../jenkins.pub"
 private_key_path = "../jenkins.pem"
 key_pair_name = "jenkins"
 ```
+Please check "terraform/terraform.tfvars", "terraform/variables.tf" and "ansible/vars/jenkins_vars.yml" files. They contain default variables, used in automation.
 
 ### Terraform
 Go to terraform folder and download all required plugins.
@@ -73,7 +97,7 @@ If your want to see plan of your own infrastructure
 ```
 $ terraform plan
 ```
-OR if you would like to pass variables directly to the script against usage of .tfvars file
+OR if you would like to pass variables directly to the script against usage of terraform.tfvars file
 ```
 $ terraform plan -var private_key_path = <path_to_your_private_key> -var public_key_path = <path_to_your_public_key>
 ```
@@ -103,9 +127,17 @@ Go to ansible folder to configure Jenkins Master and Jenkins Slave hosts.
 $ cd ansible
 
 ```
+Generate custom SSH configuration file to be able to work with resources in private subnet. It will use NAT instance as a proxy for connection. Execute:
+
+```
+ansible-playbook -i ec2.py create_custom_ssh_config.yml
+```
 
 The next step will configure Jenkins Slave host(s).
-This playbook will install java, maven packages and create configuration file for the slaves.
+This playbook will:
+* install java and maven packages
+* create configuration files for the slaves.
+
 Run the following command, if you use `vars/jenkins_vars.yml`
 ```
 ansible-playbook -i ec2.py linux_jenkins_slave.yml
@@ -127,14 +159,20 @@ ansible-playbook -i ec2.py linux_jenkins_installation.yml -u ubuntu --private-ke
 ```
 
 Now you could use your new Jenkins!
+Please use Application Load Balancer DNS name, it appears in terraform output. Or you can find it in your AWS console.
+
+Go though default installation steps and enjoy your new Jenkins CI\CD installation!
+
 
 # Terraform structure
 ```
 terraform
+|-- alb.tf         # Application Load Balancer configuration with dependencies
 |-- data.tf        # data sources
 |-- main.tf        # contain general infrastructure description
 |-- output.tf      # contain variables, that will be printed as an output
 |-- variables.tf   # define all required variables with description and default values
+|-- vpc.tf         # configure custom VPC, 2 public and 1 private subnet, routes, internet gateway and NAT instance
 
 ```
 ### General
@@ -149,7 +187,7 @@ Terraform scripts get the following variables as an input:
   description: "AWS EC2 Region"
   default value: "eu-central-1"
 
-"key_pair_name"
+"aws_key_pair_name"
   description: "Name of key pair that will be generated in AWS for further access to the instances"
   default value: "jenkins"
 
@@ -172,6 +210,31 @@ Terraform scripts get the following variables as an input:
 "jenkins_slaves_instance_count"
   description: "Count of EC2 instances allocated for Jenkins Slaves"
   default value: "1"
+
+"vpc_cidr"
+  description: "CIDR for the whole VPC"
+  default value: "10.0.0.0/16"
+
+"public_1_subnet_cidr"
+  description: "CIDR for the Public Subnet"
+  default value: "10.0.0.0/24"
+
+"public_2_subnet_cidr"
+  description: "CIDR for the Public Subnet"
+  default value: "10.0.2.0/24"
+
+"private_subnet_cidr"
+  description: "CIDR for the Private Subnet"
+  default value: "10.0.1.0/24"
+
+"availability_zone"
+  description: "Availability zone for all resources"
+  default value: "eu-central-1b"
+
+"public_2_subnet_availability_zone"
+    description: "Availability zone for all resources"
+    default value: "eu-central-1a"
+
 ```
 
 #### Output variables
@@ -187,17 +250,22 @@ Terraform scripts get the following variables as an input:
 
 "jenkins_slave_sg_id": Security group ID applied for Jenkins Slave hosts
 
-"jenkins_master_public_ip": Public IP address of created Jenkins Master host
+"jenkins_master_private_ip": Private IP address of created Jenkins Master host
 
-"jenkins_master_public_dns": Public DNS names of created Jenkins Master host
+"jenkins_master_private_dns": Private DNS names of created Jenkins Master host
 
-"jenkins_slave_public_ip": Public IP addresses of created Jenkins Slave hosts
+"jenkins_slave_private_ip": Private IP addresses of created Jenkins Slave hosts
 
-"jenkins_slave_public_dns": Public DNS names of created Jenkins Slave hosts
+"jenkins_slave_private_dns": Private DNS names of created Jenkins Slave hosts
 
 "ami_id": ID of EC2 image used for resources
 
 "aws_region": Region used in resource creation
+
+"nat_elastic_ip": IP of NAT instance, used as proxy(bastion) host
+
+"jenkins_master_alb_dns_name": DNS name of ALB, providing access to private Jenkins Master
+
 ```
 
 # Ansible structure
@@ -291,9 +359,8 @@ Please find more information about role variables:
 
 ```
 |   |-- templates
-|   |   |-- aws_ec2_cloud_configuraiton.groovy.j2  # Template to add slaves as a dynamic slaves evaluated on request
-|   |   |-- credentials.groovy.j2                  # Template for groovy script, created credentials
 |   |   |-- credentials.xml.j2                     # Template for credentials generation wiht SSH key
 |   |   |-- jenkins-slave.xml.j2                   # Template for Jenkins slaves configuration
-|   |   `-- job_config.xml.j2                      # Template for job configuration wiht pipeline
+|   |   |-- job_config.xml.j2                      # Template for job configuration wiht pipeline
+|   |   `-- custom_ssh.cfg.j2                      # Template for custom SSH config
 ```

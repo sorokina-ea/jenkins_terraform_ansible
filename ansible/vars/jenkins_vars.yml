@@ -8,6 +8,7 @@ private_key: "{{ lookup('file', '{{ private_key_path }}' )}}"
 public_key: "{{ lookup('file', '{{ public_key_path }}' )}}"
 
 jenkins_admin_username: admin
+# Please change the password for appropriate one. This is for demonnstration only!
 jenkins_admin_password: admin
 jenkins_home: /var/lib/jenkins
 jenkins_http_port: 8080

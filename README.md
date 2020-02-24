@@ -55,6 +55,7 @@ $ chmod 600 jenkins.pem
 $ mv jenkins.pem.pub jenkins.pub
 
 $ cd terraform
+$ terraform init
 $ terraform apply -auto-approve
 
 cd ../ansible
